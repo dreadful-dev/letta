@@ -28,6 +28,39 @@ class BaseMCPClient:
         self.cleanup_funcs = []
         self.max_reconnect_attempts = 3
         self.reconnect_delay = 1.0
+        self._loop_thread = None
+
+    def _run_async_safely(self, coro):
+        """Run async operation safely, handling existing event loops"""
+        try:
+            # Check if there's already a running event loop
+            current_loop = asyncio.get_running_loop()
+            if current_loop.is_running():
+                # We're in an async context, need to run in thread
+                return self._run_in_thread(coro)
+        except RuntimeError:
+            # No running event loop, safe to use run_until_complete
+            pass
+        
+        # Run in our dedicated loop
+        return self.loop.run_until_complete(coro)
+    
+    def _run_in_thread(self, coro):
+        """Run coroutine in a separate thread with its own event loop"""
+        import concurrent.futures
+        
+        def run_in_new_thread():
+            # Create new event loop for this thread
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_new_thread)
+            return future.result()
 
     def connect_to_server(self):
         asyncio.set_event_loop(self.loop)
@@ -35,7 +68,7 @@ class BaseMCPClient:
 
         if success:
             try:
-                self.loop.run_until_complete(
+                self._run_async_safely(
                     asyncio.wait_for(self.session.initialize(), timeout=tool_settings.mcp_connect_to_server_timeout)
                 )
                 self.initialized = True
@@ -54,7 +87,7 @@ class BaseMCPClient:
         
         def _list_tools():
             try:
-                response = self.loop.run_until_complete(
+                response = self._run_async_safely(
                     asyncio.wait_for(self.session.list_tools(), timeout=tool_settings.mcp_list_tools_timeout)
                 )
                 return response.tools
@@ -71,7 +104,7 @@ class BaseMCPClient:
         
         def _execute_tool():
             try:
-                result = self.loop.run_until_complete(
+                result = self._run_async_safely(
                     asyncio.wait_for(self.session.call_tool(tool_name, tool_args), timeout=tool_settings.mcp_execute_tool_timeout)
                 )
 
@@ -172,7 +205,7 @@ class BaseMCPClient:
         
         try:
             # Quick health check - list tools with shorter timeout
-            self.loop.run_until_complete(
+            self._run_async_safely(
                 asyncio.wait_for(self.session.list_tools(), timeout=5.0)
             )
             return True

@@ -21,13 +21,19 @@ class StdioMCPClient(BaseMCPClient):
         try:
             server_params = StdioServerParameters(command=server_config.command, args=server_config.args, env=server_config.env)
             stdio_cm = forked_stdio_client(server_params)
-            stdio_transport = self.loop.run_until_complete(asyncio.wait_for(stdio_cm.__aenter__(), timeout=timeout))
+            stdio_transport = self._run_async_safely(asyncio.wait_for(stdio_cm.__aenter__(), timeout=timeout))
             self.stdio, self.write = stdio_transport
-            self.cleanup_funcs.append(lambda: self.loop.run_until_complete(stdio_cm.__aexit__(None, None, None)))
+            
+            # Store context managers for proper cleanup
+            self.stdio_cm = stdio_cm
+            self.cleanup_funcs.append(self._safe_stdio_cleanup)
 
             session_cm = ClientSession(self.stdio, self.write)
-            self.session = self.loop.run_until_complete(asyncio.wait_for(session_cm.__aenter__(), timeout=timeout))
-            self.cleanup_funcs.append(lambda: self.loop.run_until_complete(session_cm.__aexit__(None, None, None)))
+            self.session = self._run_async_safely(asyncio.wait_for(session_cm.__aenter__(), timeout=timeout))
+            
+            # Store session context manager for proper cleanup
+            self.session_cm = session_cm
+            self.cleanup_funcs.append(self._safe_session_cleanup)
             return True
         except asyncio.TimeoutError:
             logger.error(f"Timed out while establishing stdio connection (timeout={timeout}s).")
@@ -35,6 +41,28 @@ class StdioMCPClient(BaseMCPClient):
         except Exception:
             logger.exception("Exception occurred while initializing stdio client session.")
             return False
+
+    def _safe_stdio_cleanup(self):
+        """Safely cleanup stdio connection, handling ClosedResourceError"""
+        try:
+            if hasattr(self, 'stdio_cm') and self.stdio_cm:
+                self._run_async_safely(self.stdio_cm.__aexit__(None, None, None))
+        except Exception as e:
+            if self._is_connection_closed(e):
+                logger.debug(f"Stdio connection already closed during cleanup: {e}")
+            else:
+                logger.warning(f"Error during stdio cleanup: {e}")
+    
+    def _safe_session_cleanup(self):
+        """Safely cleanup session, handling ClosedResourceError"""
+        try:
+            if hasattr(self, 'session_cm') and self.session_cm:
+                self._run_async_safely(self.session_cm.__aexit__(None, None, None))
+        except Exception as e:
+            if self._is_connection_closed(e):
+                logger.debug(f"Session already closed during cleanup: {e}")
+            else:
+                logger.warning(f"Error during session cleanup: {e}")
 
 
 @asynccontextmanager
