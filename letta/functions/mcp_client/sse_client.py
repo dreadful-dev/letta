@@ -6,6 +6,7 @@ from mcp.client.sse import sse_client
 from letta.functions.mcp_client.base_client import BaseMCPClient
 from letta.functions.mcp_client.types import SSEServerConfig
 from letta.log import get_logger
+from letta.utils import run_async_task
 
 # see: https://modelcontextprotocol.io/quickstart/user
 MCP_CONFIG_TOPLEVEL_KEY = "mcpServers"
@@ -17,7 +18,7 @@ class SSEMCPClient(BaseMCPClient):
     def _initialize_connection(self, server_config: SSEServerConfig, timeout: float) -> bool:
         try:
             sse_cm = sse_client(url=server_config.server_url)
-            sse_transport = self._run_async_safely(asyncio.wait_for(sse_cm.__aenter__(), timeout=timeout))
+            sse_transport = run_async_task(asyncio.wait_for(sse_cm.__aenter__(), timeout=timeout))
             self.stdio, self.write = sse_transport
             
             # Store context managers for proper cleanup
@@ -25,7 +26,7 @@ class SSEMCPClient(BaseMCPClient):
             self.cleanup_funcs.append(self._safe_sse_cleanup)
 
             session_cm = ClientSession(self.stdio, self.write)
-            self.session = self._run_async_safely(asyncio.wait_for(session_cm.__aenter__(), timeout=timeout))
+            self.session = run_async_task(asyncio.wait_for(session_cm.__aenter__(), timeout=timeout))
             
             # Store session context manager for proper cleanup  
             self.session_cm = session_cm
@@ -42,7 +43,7 @@ class SSEMCPClient(BaseMCPClient):
         """Safely cleanup SSE connection, handling ClosedResourceError"""
         try:
             if hasattr(self, 'sse_cm') and self.sse_cm:
-                self._run_async_safely(self.sse_cm.__aexit__(None, None, None))
+                run_async_task(self.sse_cm.__aexit__(None, None, None))
         except Exception as e:
             if self._is_connection_closed(e):
                 logger.debug(f"SSE connection already closed during cleanup: {e}")
@@ -53,7 +54,7 @@ class SSEMCPClient(BaseMCPClient):
         """Safely cleanup session, handling ClosedResourceError"""
         try:
             if hasattr(self, 'session_cm') and self.session_cm:
-                self._run_async_safely(self.session_cm.__aexit__(None, None, None))
+                run_async_task(self.session_cm.__aexit__(None, None, None))
         except Exception as e:
             if self._is_connection_closed(e):
                 logger.debug(f"Session already closed during cleanup: {e}")

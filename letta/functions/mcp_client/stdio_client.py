@@ -12,6 +12,7 @@ from mcp.client.stdio import get_default_environment
 from letta.functions.mcp_client.base_client import BaseMCPClient
 from letta.functions.mcp_client.types import StdioServerConfig
 from letta.log import get_logger
+from letta.utils import run_async_task
 
 logger = get_logger(__name__)
 
@@ -21,7 +22,7 @@ class StdioMCPClient(BaseMCPClient):
         try:
             server_params = StdioServerParameters(command=server_config.command, args=server_config.args, env=server_config.env)
             stdio_cm = forked_stdio_client(server_params)
-            stdio_transport = self._run_async_safely(asyncio.wait_for(stdio_cm.__aenter__(), timeout=timeout))
+            stdio_transport = run_async_task(asyncio.wait_for(stdio_cm.__aenter__(), timeout=timeout))
             self.stdio, self.write = stdio_transport
             
             # Store context managers for proper cleanup
@@ -29,7 +30,7 @@ class StdioMCPClient(BaseMCPClient):
             self.cleanup_funcs.append(self._safe_stdio_cleanup)
 
             session_cm = ClientSession(self.stdio, self.write)
-            self.session = self._run_async_safely(asyncio.wait_for(session_cm.__aenter__(), timeout=timeout))
+            self.session = run_async_task(asyncio.wait_for(session_cm.__aenter__(), timeout=timeout))
             
             # Store session context manager for proper cleanup
             self.session_cm = session_cm
@@ -46,7 +47,7 @@ class StdioMCPClient(BaseMCPClient):
         """Safely cleanup stdio connection, handling ClosedResourceError"""
         try:
             if hasattr(self, 'stdio_cm') and self.stdio_cm:
-                self._run_async_safely(self.stdio_cm.__aexit__(None, None, None))
+                run_async_task(self.stdio_cm.__aexit__(None, None, None))
         except Exception as e:
             if self._is_connection_closed(e):
                 logger.debug(f"Stdio connection already closed during cleanup: {e}")
@@ -57,7 +58,7 @@ class StdioMCPClient(BaseMCPClient):
         """Safely cleanup session, handling ClosedResourceError"""
         try:
             if hasattr(self, 'session_cm') and self.session_cm:
-                self._run_async_safely(self.session_cm.__aexit__(None, None, None))
+                run_async_task(self.session_cm.__aexit__(None, None, None))
         except Exception as e:
             if self._is_connection_closed(e):
                 logger.debug(f"Session already closed during cleanup: {e}")
