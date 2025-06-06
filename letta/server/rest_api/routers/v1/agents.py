@@ -825,23 +825,66 @@ async def process_message_background(
     messages: List[MessageCreate],
     use_assistant_message: bool,
     assistant_message_tool_name: str,
-    assistant_message_tool_kwarg: str,
+    assistant_message_tool_kwarg: str
 ) -> None:
     """Background task to process the message and update job status."""
     try:
         request_start_timestamp_ns = get_utc_timestamp_ns()
-        result = await server.send_message_to_agent(
-            agent_id=agent_id,
-            actor=actor,
-            input_messages=messages,
-            stream_steps=False,  # NOTE(matt)
-            stream_tokens=False,
-            use_assistant_message=use_assistant_message,
-            assistant_message_tool_name=assistant_message_tool_name,
-            assistant_message_tool_kwarg=assistant_message_tool_kwarg,
-            metadata={"job_id": job_id},  # Pass job_id through metadata
-            request_start_timestamp_ns=request_start_timestamp_ns,
-        )
+        
+        # Apply the same experimental agent logic as the synchronous endpoints
+        user_eligible = True
+        agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
+        agent_eligible = agent.enable_sleeptime or agent.agent_type == AgentType.sleeptime_agent or not agent.multi_agent_group
+        feature_enabled = True
+        model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
+
+        if user_eligible and agent_eligible and feature_enabled and model_compatible:
+            # Use experimental agent (LettaAgent or SleeptimeMultiAgentV2)
+            if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
+                experimental_agent = SleeptimeMultiAgentV2(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    passage_manager=server.passage_manager,
+                    group_manager=server.group_manager,
+                    job_manager=server.job_manager,
+                    actor=actor,
+                    group=agent.multi_agent_group,
+                )
+            else:
+                experimental_agent = LettaAgent(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    passage_manager=server.passage_manager,
+                    actor=actor,
+                    step_manager=server.step_manager,
+                    telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                )
+            
+            # Use experimental agent's step method
+            result = await experimental_agent.step(
+                messages,
+                max_steps=25,
+                use_assistant_message=use_assistant_message,
+                request_start_timestamp_ns=request_start_timestamp_ns,
+            )
+        else:
+            # Fall back to regular agent processing
+            result = await server.send_message_to_agent(
+                agent_id=agent_id,
+                actor=actor,
+                input_messages=messages,
+                stream_steps=False,  # NOTE(matt)
+                stream_tokens=False,
+                use_assistant_message=use_assistant_message,
+                assistant_message_tool_name=assistant_message_tool_name,
+                assistant_message_tool_kwarg=assistant_message_tool_kwarg,
+                metadata={"job_id": job_id},  # Pass job_id through metadata
+                request_start_timestamp_ns=request_start_timestamp_ns,
+            )
 
         # Update job status to completed
         job_update = JobUpdate(
@@ -870,6 +913,7 @@ async def process_message_background(
 async def send_message_async(
     agent_id: str,
     background_tasks: BackgroundTasks,
+    request_obj: Request,
     server: SyncServer = Depends(get_letta_server),
     request: LettaRequest = Body(...),
     actor_id: Optional[str] = Header(None, alias="user_id"),
