@@ -867,7 +867,7 @@ async def process_message_background(
             # Use experimental agent's step method
             result = await experimental_agent.step(
                 messages,
-                max_steps=25,
+                max_steps=250,
                 use_assistant_message=use_assistant_message,
                 request_start_timestamp_ns=request_start_timestamp_ns,
             )
