@@ -15,7 +15,7 @@ class AsyncStdioMCPClient(AsyncBaseMCPClient):
         args = [arg.split() for arg in server_config.args]
         # flatten
         args = [arg for sublist in args for arg in sublist]
-        server_params = StdioServerParameters(command=server_config.command, args=args)
+        server_params = StdioServerParameters(command=server_config.command, args=args, env=server_config.env)
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
         self.stdio, self.write = stdio_transport
         self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
