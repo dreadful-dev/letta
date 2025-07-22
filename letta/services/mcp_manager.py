@@ -1,6 +1,9 @@
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from letta.schemas.agent import AgentState
 
 from sqlalchemy import null
 
@@ -58,7 +61,7 @@ class MCPManager:
 
     @enforce_types
     async def execute_mcp_server_tool(
-        self, mcp_server_name: str, tool_name: str, tool_args: Optional[Dict[str, Any]], actor: PydanticUser
+        self, mcp_server_name: str, tool_name: str, tool_args: Optional[Dict[str, Any]], actor: PydanticUser, agent_state: Optional["AgentState"] = None
     ) -> Tuple[str, bool]:
         """Call a specific tool from a specific MCP server."""
         from letta.settings import tool_settings
@@ -75,6 +78,37 @@ class MCPManager:
                 print("MCP server not found in config.", mcp_config)
                 raise ValueError(f"MCP server {mcp_server_name} not found in config.")
             server_config = mcp_config[mcp_server_name]
+
+        # Inject agent-specific headers if agent_state is provided
+        dynamic_headers = {}
+        if agent_state and agent_state.id:
+            dynamic_headers["X-Letta-Agent-ID"] = agent_state.id
+
+        # Create modified server config with dynamic headers if needed
+        if dynamic_headers and isinstance(server_config, (SSEServerConfig, StreamableHTTPServerConfig)):
+            # Merge existing custom_headers with dynamic headers
+            merged_headers = {}
+            if server_config.custom_headers:
+                merged_headers.update(server_config.custom_headers)
+            merged_headers.update(dynamic_headers)
+            
+            # Create a new config with merged headers
+            if isinstance(server_config, SSEServerConfig):
+                server_config = SSEServerConfig(
+                    server_name=server_config.server_name,
+                    server_url=server_config.server_url,
+                    auth_header=server_config.auth_header,
+                    auth_token=server_config.auth_token,
+                    custom_headers=merged_headers
+                )
+            elif isinstance(server_config, StreamableHTTPServerConfig):
+                server_config = StreamableHTTPServerConfig(
+                    server_name=server_config.server_name,
+                    server_url=server_config.server_url,
+                    auth_header=server_config.auth_header,
+                    auth_token=server_config.auth_token,
+                    custom_headers=merged_headers
+                )
 
         if isinstance(server_config, SSEServerConfig):
             # mcp_client = AsyncSSEMCPClient(server_config=server_config)

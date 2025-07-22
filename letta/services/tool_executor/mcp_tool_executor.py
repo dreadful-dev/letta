@@ -36,7 +36,7 @@ class ExternalMCPToolExecutor(ToolExecutor):
         mcp_manager = MCPManager()
         # TODO: may need to have better client connection management
         function_response, success = await mcp_manager.execute_mcp_server_tool(
-            mcp_server_name=mcp_server_name, tool_name=function_name, tool_args=function_args, actor=actor
+            mcp_server_name=mcp_server_name, tool_name=function_name, tool_args=function_args, actor=actor, agent_state=agent_state
         )
 
         return ToolExecutionResult(
